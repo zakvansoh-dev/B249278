@@ -1,30 +1,147 @@
 ---
-title: "Assesment"
-author: "Zakariya Vansoh"
-date: "2025-11-06"
-output: html_document
+Title- "Seasonality of Antihistamine Prescribing in Scotland"
+Author- "Zakariya Vansoh"
+Date- "2025-10-28"
+Files- https://www.opendata.nhs.scot/dataset/prescriptions-in-the-community
+
+Data Source- Public Health Scotland- "Prescriptions in the Community"
+CSV files retrieved from- "Data by Board- July to December 2024," "Data by Board- January to June 2024," Data by Board- January to June 2025," "Data by Board- July 2025."
+  
+Note for reproducibility- If you run this Rmd locally after cloning the repo, please put the four csv files in a "Data/" folder. If you have direct CSV links, set "param$board_files" accordingly.
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+#Set up renv
+install.packages("renv")
+
+#Create renv environment and lockfile
+renv :: init(bare = TRUE)
+
+#Install packages
+install.packages(c("tidyverse","vroom","ggplot2","dplyr","knitr","lubridate"))
+
+#Load libraries
+library("vroom")
+library("tidyverse")
+library("ggplot2")
+library("knitr")
+library("dplyr")
+library("lubridate")
+
 ```
 
-## R Markdown
+Introduction
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+This report examines monthly prescribing of antihistamines across NHS Scotland Health Boards. The objective is to identify whetehr prescribing demonstrates seaonal variation, and whether the magnitude of prescribing differs across Boards.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+Data were supplied as multiple prescribing extracts, each containing prescription items, quantities , costs and metadata including Helath board (HBT) and Paid Date Month
 
-```{r cars}
-summary(cars)
+Data Preparation
+```{r}
+
+#Set file paths
+data_dir <- "Data"
+
+#Read and combine Board files
+board_files <- list.files(data_dir, pattern = "Board_.*\\.csv$", full.names = TRUE)
+
+#Coerce key columns using vroom
+board_raw <- vroom(board_files, show_col_types = FALSE)
+
+#Create a proper date at the first of each month
+board <- board_raw %>% 
+  mutate(
+    PaidDateMonth = as.integer(PaidDateMonth),
+    year = if_else(!is.na(PaidDateMonth), PaidDateMonth %/% 100, NA_integer_),
+    month = if_else(!is.na(PaidDateMonth), PaidDateMonth %% 100, NA_integer_),
+    date = make_date(year, month, 1)
+    )
 ```
 
-## Including Plots
+Identification of Antihistamines
 
-You can also embed plots, for example:
+A keyword-based approach was used to identify antihistamine medicines:
+```{r}
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+#Define antihistamine keywords
+
+antikeys <- c("loratadine","cetirizine","chlorphenamine","fexofenadine",
+              "promethazine","azelastine","levocetirizine","levocet","antihist")
+
+#create lowercase BNF description column for keyword matching
+board <- board %>%
+  mutate(bnf_l = tolower(BNFItemDescription))
+
+#HBT x month
+board_antihist <- board %>%
+  filter(str_detect(bnf_l, paste(antikeys, collapse = "|")))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Monthly Aggregate by Health Board
+```{r}
+# Aggregate
+board_monthly <- board_antihist %>%
+  group_by(HBT, date) %>%
+  summarise(
+    total_items = sum(as.numeric(NumberOfPaidItems), na.rm = TRUE),
+    total_paid_qty = sum(as.numeric(PaidQuantity), na.rm = TRUE),
+    total_gic = sum(as.numeric(GrossIngredientCost), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(HBT, date)
+```
+
+Summary Statistics
+```{r}
+#Create the summary table 
+summary_table <- board_monthly %>%
+  group_by(HBT) %>%
+  summarise(
+    mean_monthly_items = mean(total_items, na.rm = TRUE),
+    sd_monthly_items = sd(total_items, na.rm = TRUE),
+    peak_month = date[which.max(total_items)],
+    total_items_all = sum(total_items, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_monthly_items))
+
+# Print
+knitr::kable(summary_table, digits = 2, caption = "Antihistamine prescribing summary by Health Board")
+
+# Save to CSV
+write.csv(summary_table, "summary_table_by_HBT.csv", row.names = FALSE)
+```
+
+Monthly Time Series by Health Board
+```{r}
+# Choose y variable
+yvar <- if("items_per_1000" %in% names(board_monthly) && !all(is.na(board_monthly$items_per_1000))) "items_per_1000" else "total_items"
+ylab <- if(yvar == "items_per_1000") "Items per 1,000 population (monthly)" else "Items (monthly)"
+
+# Make plot
+p <- board_monthly %>%
+  ggplot(aes(x = date, y = .data[[yvar]])) +
+  geom_line() +
+  facet_wrap(~ HBT, scales = "free_y", ncol = 3) +
+  labs(title = "Monthly antihistamine prescribing by Health Board",
+       subtitle = "Data combined from provided Board files",
+       x = "Month", y = ylab) +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 9))
+
+print(p)
+
+# Save plot
+ggsave("antihistamine_by_HBT_faceted.png", p, width = 12, height = 9, dpi = 300)
+```
+
+Interpretation
+
+All boards exhibit clear seasonal increase in antihistamine prescribing during late spring and summer, consistent with pollen allergy patterns. The magnitude of prescribing varies substantially across Health Boards. Larger Boards such as S08000031 and S08000032 show the highest mean monthly volumes.
+
+Conclusion
+
+There is strong evidence of seasonal variation in antihistamine prescribing across Scotland, with consistent peaks in early summer. Differences between Boards suggest varying population size, disease burden, and prescribing practice.
+

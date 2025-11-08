@@ -1,26 +1,11 @@
+```
 ---
-Title- "Seasonality of Antihistamine Prescribing in Scotland"
-Author- "Zakariya Vansoh"
-Date- "2025-10-28"
-Files- https://www.opendata.nhs.scot/dataset/prescriptions-in-the-community
-
-Data Source- Public Health Scotland- "Prescriptions in the Community"
-CSV files retrieved from- "Data by Board- July to December 2024," "Data by Board- January to June 2024," Data by Board- January to June 2025," "Data by Board- July 2025."
-  
-Note for reproducibility- If you run this Rmd locally after cloning the repo, please put the four csv files in a "Data/" folder. If you have direct CSV links, set "param$board_files" accordingly.
+title: "Vansoh"
+date: "2025-10-28"
+output: html_document
 ---
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-
-#Set up renv
-install.packages("renv")
-
-#Create renv environment and lockfile
-renv :: init(bare = TRUE)
-
-#Install packages
-install.packages(c("tidyverse","vroom","ggplot2","dplyr","knitr","lubridate"))
 
 #Load libraries
 library("vroom")
@@ -29,75 +14,139 @@ library("ggplot2")
 library("knitr")
 library("dplyr")
 library("lubridate")
+library("janitor")
 
 ```
 
 Introduction
 
-This report examines monthly prescribing of antihistamines across NHS Scotland Health Boards. The objective is to identify whetehr prescribing demonstrates seaonal variation, and whether the magnitude of prescribing differs across Boards.
+This report examines monthly prescribing of antihistamines across NHS Scotland Health Boards. The objective is to identify whether prescribing demonstrates seasonal variation, and whether the magnitude of prescribing differs across Boards.
 
-Data were supplied as multiple prescribing extracts, each containing prescription items, quantities , costs and metadata including Helath board (HBT) and Paid Date Month
+Data were supplied as multiple prescribing extracts, each containing prescription items, quantities , costs and metadata including Heath board (HBT) and Paid Date Month
 
 Data Preparation
 ```{r}
 
-#Set file paths
-data_dir <- "Data"
+# Read CSVs from URL
+jul_aug_2025 <- read_csv("https://www.opendata.nhs.scot/dataset/84393984-14e9-4b0d-a797-b288db64d088/resource/f02161c1-15f6-4d9f-8be5-01ba613d4303/download/hb_pitc2025_07.csv") %>% 
+clean_names()
 
-#Read and combine Board files
-board_files <- list.files(data_dir, pattern = "Board_.*\\.csv$", full.names = TRUE)
+jan_jun_2025 <- read_csv("https://www.opendata.nhs.scot/dataset/84393984-14e9-4b0d-a797-b288db64d088/resource/9de908b3-9c28-4cc3-aa32-72350a0579d1/download/hb_pitc2025_01_06.csv") %>% 
+clean_names()
 
-#Coerce key columns using vroom
-board_raw <- vroom(board_files, show_col_types = FALSE)
+jan_jun_2024 <- read_csv("https://www.opendata.nhs.scot/dataset/84393984-14e9-4b0d-a797-b288db64d088/resource/f0df380b-3f9b-4536-bb87-569e189b727a/download/hb_pitc2024_01_06-1.csv") %>% 
+clean_names()
 
-#Create a proper date at the first of each month
-board <- board_raw %>% 
-  mutate(
-    PaidDateMonth = as.integer(PaidDateMonth),
-    year = if_else(!is.na(PaidDateMonth), PaidDateMonth %/% 100, NA_integer_),
-    month = if_else(!is.na(PaidDateMonth), PaidDateMonth %% 100, NA_integer_),
-    date = make_date(year, month, 1)
-    )
-```
+jul_dec_2024 <- read_csv("https://www.opendata.nhs.scot/dataset/84393984-14e9-4b0d-a797-b288db64d088/resource/f3b9f2e2-66c0-4310-9b8e-734781d2ed0a/download/hb_pitc2024_07_12-1.csv") %>% 
+clean_names()
 
-Identification of Antihistamines
+# Combine datasets
+board <- bind_rows(jan_jun_2024, jul_dec_2024, jan_jun_2025, jul_aug_2025)
 
-A keyword-based approach was used to identify antihistamine medicines:
-```{r}
+# Clean and remove duplicate-named columns 
+board <- board %>% janitor::clean_names()
+if (any(duplicated(names(board)))) {
+  dup_names <- names(board)[duplicated(names(board))]
+  message("Duplicate column names found and removed: ", paste(unique(dup_names), collapse = ", "))
+  board <- board[, !duplicated(names(board))]
+}
 
-#Define antihistamine keywords
+# Find columns on cleaned dataframe
+find_col <- function(df, patterns){
+  pat <- paste(patterns, collapse="|")
+  cols <- names(df)[str_detect(names(df), regex(pat, ignore_case = TRUE))]
+  if(length(cols)==0) return(NA_character_)
+  cols[1]
+}
 
-antikeys <- c("loratadine","cetirizine","chlorphenamine","fexofenadine",
-              "promethazine","azelastine","levocetirizine","levocet","antihist")
+# Identify the actual columns on the cleaned dataframe
+col_paid_month <- find_col(board, c("^paid.?date.?month$","^paid_date_month$","paid.*month","paidmonth"))
+col_hbt        <- find_col(board, c("^hbt$","^hb$","^health.*board","board"))
+col_bnf_desc   <- find_col(board, c("bnf","item_description","bnf_item_description","description"))
+col_num_items  <- find_col(board, c("number_of_paid_items","paid_items","no_of_paid_items","numberpaiditems","number_of_items"))
+col_paid_qty   <- find_col(board, c("paid_quantity","paid_qty","quantity"))
+col_gic        <- find_col(board, c("gross_ingredient_cost","gic","gross_ingredient"))
 
-#create lowercase BNF description column for keyword matching
+# Fail early if anything missing (gives readable error)
+required <- c(col_paid_month, col_hbt, col_bnf_desc, col_num_items, col_paid_qty, col_gic)
+if (any(is.na(required))) {
+  stop("One or more required columns not found on cleaned data. Found:\n",
+       paste0("paid_month=", col_paid_month, ", hbt=", col_hbt, ", bnf_desc=", col_bnf_desc,
+              ", num_items=", col_num_items, ", paid_qty=", col_paid_qty, ", gic=", col_gic))
+}
+
+# Clean duplicate column names 
+if (any(duplicated(names(board)))) {
+  dup_cols <- names(board)[duplicated(names(board))]
+  message("Removing duplicate columns: ", paste(dup_cols, collapse = ", "))
+  board <- board[, !duplicated(names(board))]
+}
+
+# Remove duplicate columns before renaming
+if (any(duplicated(names(board)))) {
+  dup_cols <- names(board)[duplicated(names(board))]
+  message("Removing duplicate columns: ", paste(dup_cols, collapse = ", "))
+  board <- board[, !duplicated(names(board))]
+}
+
+# Rename to standard names safely
+
 board <- board %>%
-  mutate(bnf_l = tolower(BNFItemDescription))
+  rename(
+    paid_date_month = all_of(col_paid_month),
+    hbt = all_of(col_hbt),
+    number_of_paid_items = all_of(col_num_items),
+    paid_quantity = all_of(col_paid_qty),
+    gross_ingredient_cost = all_of(col_gic)
+  )
 
-#HBT x month
-board_antihist <- board %>%
-  filter(str_detect(bnf_l, paste(antikeys, collapse = "|")))
+# Create date column from paid_date_month 
+board <- board %>%
+  mutate(
+    paid_date_month = suppressWarnings(as.integer(paid_date_month)),
+    year = paid_date_month %/% 100,
+    month = paid_date_month %% 100,
+    date = make_date(year, month, 1)
+  ) %>%
+  filter(!is.na(date))
+  
+
+# Filter rows that look like antihistamines
+antikeys <- c("loratadine","cetirizine","chlorphenamine","fexofenadine",
+              "promethazine","azelastine","levocetirizine","antihist")
+
+board <- board %>%
+  mutate(bnf_low = tolower(as.character(bnf_item_description))) %>%
+  filter(str_detect(bnf_low, paste(antikeys, collapse = "|")))
+
+# Check
+glimpse(board)
+
 ```
 
-Monthly Aggregate by Health Board
-```{r}
-# Aggregate
-board_monthly <- board_antihist %>%
-  group_by(HBT, date) %>%
+
+```{r monthly_aggregate}
+#Group variables
+board_monthly <- board %>%
+  group_by(hbt, date) %>%
   summarise(
-    total_items = sum(as.numeric(NumberOfPaidItems), na.rm = TRUE),
-    total_paid_qty = sum(as.numeric(PaidQuantity), na.rm = TRUE),
-    total_gic = sum(as.numeric(GrossIngredientCost), na.rm = TRUE),
+    total_items = sum(number_of_paid_items, na.rm = TRUE),
+    total_qty = sum(paid_quantity, na.rm = TRUE),
+    total_cost = sum(gross_ingredient_cost, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  arrange(HBT, date)
+  arrange(hbt, date)
+
+# Check
+glimpse(board_monthly)
 ```
 
-Summary Statistics
-```{r}
-#Create the summary table 
+
+
+```{r summary_table}
+# Summary table by Health Board
 summary_table <- board_monthly %>%
-  group_by(HBT) %>%
+  group_by(hbt) %>%
   summarise(
     mean_monthly_items = mean(total_items, na.rm = TRUE),
     sd_monthly_items = sd(total_items, na.rm = TRUE),
@@ -107,36 +156,37 @@ summary_table <- board_monthly %>%
   ) %>%
   arrange(desc(mean_monthly_items))
 
-# Print
-knitr::kable(summary_table, digits = 2, caption = "Antihistamine prescribing summary by Health Board")
+kable(summary_table, digits = 2, caption = "Antihistamine Prescribing Summary by Health Board")
 
-# Save to CSV
+# Save to csv
 write.csv(summary_table, "summary_table_by_HBT.csv", row.names = FALSE)
+
 ```
 
-Monthly Time Series by Health Board
-```{r}
-# Choose y variable
-yvar <- if("items_per_1000" %in% names(board_monthly) && !all(is.na(board_monthly$items_per_1000))) "items_per_1000" else "total_items"
-ylab <- if(yvar == "items_per_1000") "Items per 1,000 population (monthly)" else "Items (monthly)"
 
-# Make plot
-p <- board_monthly %>%
-  ggplot(aes(x = date, y = .data[[yvar]])) +
+
+
+```{r plot_faceted, fig.width=12, fig.height=9}
+# Faceted time-series plot 
+
+p <- ggplot(board_monthly, aes(x = date, y = total_items)) +
   geom_line() +
-  facet_wrap(~ HBT, scales = "free_y", ncol = 3) +
-  labs(title = "Monthly antihistamine prescribing by Health Board",
-       subtitle = "Data combined from provided Board files",
-       x = "Month", y = ylab) +
+  facet_wrap(~ hbt, scales = "free_y", ncol = 3) +
+  labs(
+    title = "Monthly Antihistamine Prescribing by Health Board",
+    subtitle = "Items dispensed per month",
+    x = "Month",
+    y = "Number of Items"
+  ) +
   theme_minimal() +
   theme(strip.text = element_text(size = 9))
 
 print(p)
 
-# Save plot
+# Save to csv
 ggsave("antihistamine_by_HBT_faceted.png", p, width = 12, height = 9, dpi = 300)
-```
 
+```
 Interpretation
 
 All boards exhibit clear seasonal increase in antihistamine prescribing during late spring and summer, consistent with pollen allergy patterns. The magnitude of prescribing varies substantially across Health Boards. Larger Boards such as S08000031 and S08000032 show the highest mean monthly volumes.

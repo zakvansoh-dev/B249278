@@ -10,8 +10,9 @@
 
 
 
+<meta name="date" content="2025-10-28" />
 
-<title>index.knit</title>
+<title>B249278</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -348,27 +349,22 @@ display: none;
 
 
 
+<h1 class="title toc-ignore">B249278</h1>
+<h4 class="date">2025-10-28</h4>
 
 </div>
 
 
-<pre><code>---
-title: &quot;Vansoh&quot;
-date: &quot;2025-10-28&quot;
-output: html_document
----
-
-
-Introduction
-
-This report examines monthly prescribing of antihistamines across NHS Scotland Health Boards. The objective is to identify whether prescribing demonstrates seasonal variation, and whether the magnitude of prescribing differs across Boards.
-
-Data were supplied as multiple prescribing extracts, each containing prescription items, quantities , costs and metadata including Heath board (HBT) and Paid Date Month
-
-Data Preparation
-
-``` r
-# Read CSVs from URL
+<p>Introduction</p>
+<p>This report examines monthly prescribing of antihistamines across NHS
+Scotland Health Boards. The objective is to identify whether prescribing
+demonstrates seasonal variation, and whether the magnitude of
+prescribing differs across Boards.</p>
+<p>Data were supplied as multiple prescribing extracts, each containing
+prescription items, quantities , costs and metadata including Heath
+board (HBT) and Paid Date Month</p>
+<p>Data Preparation</p>
+<pre class="r"><code># Read CSVs from URL
 jul_aug_2025 &lt;- read_csv(&quot;https://www.opendata.nhs.scot/dataset/84393984-14e9-4b0d-a797-b288db64d088/resource/f02161c1-15f6-4d9f-8be5-01ba613d4303/download/hb_pitc2025_07.csv&quot;) %&gt;% 
 clean_names()</code></pre>
 <pre><code>## Rows: 122280 Columns: 9
